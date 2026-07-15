@@ -1,0 +1,9 @@
+# Regenerable / large artifacts
+# cached burnable flags (rebuild in the `rev` env)
+*.npz
+logs/
+__pycache__/
+*.pyc
+
+# Org slide template (large; keep locally, not committed)
+Template.pptx
