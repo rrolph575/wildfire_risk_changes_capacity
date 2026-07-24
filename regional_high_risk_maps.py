@@ -138,10 +138,27 @@ def plot_region(name, cfg, common, with_burnable):
     print()
 
     n = len(SCEN_ORDER)
-    fig, axes = plt.subplots(n, 1, figsize=(8.5, 4.6 * n),
+    # Panels side by side (1 x n) so the figure fits a 16:9 slide. Height comes
+    # from the region's own aspect, so the equal-aspect panels leave no big gap.
+    panel_w = 6.5
+    panel_h = panel_w * (y1 - y0) / (x1 - x0)
+    fig, axes = plt.subplots(1, n, figsize=(panel_w * n, panel_h + 2.2),
                              constrained_layout=True)
     if n == 1:
         axes = [axes]
+
+    # One shared legend for all panels (identical across them), placed below the
+    # maps so it never covers data.
+    def sq(color, lbl):
+        return Line2D([0], [0], marker="s", linestyle="None", color=color,
+                      markersize=12, label=lbl)
+    if with_burnable:
+        handles = [sq("crimson", "high risk (A ≥ threshold, burnable)"),
+                   sq("0.85", "burnable, not high-risk"),
+                   sq("#6b8fb5", "non-burnable (WHP = 0)")]
+    else:
+        handles = [sq("crimson", "high risk (A ≥ threshold)"),
+                   sq("0.85", "not high-risk (A < threshold)")]
     for c, s in enumerate(SCEN_ORDER):
         ax = axes[c]
         thr = THRESHOLDS[s]
@@ -161,7 +178,7 @@ def plot_region(name, cfg, common, with_burnable):
             denom = bok.sum()
             hr_pct = 100 * (bok & hr).sum() / denom if denom else float("nan")
             burn_pct = 100 * (burn == 1).mean()
-            title = (f"{s} threshold: A >= {thr:.0f} days/yr  |  "
+            title = (f"{s} threshold: A >= {thr:.0f} days/yr\n"
                      f"{hr_pct:.1f}% of burnable cells high-risk  |  "
                      f"{burn_pct:.1f}% burnable")
         else:
@@ -170,21 +187,8 @@ def plot_region(name, cfg, common, with_burnable):
             ax.scatter(lon_s[hr], lat_s[hr], c="crimson", s=0.3, marker="s",
                        linewidths=0, rasterized=True)
             hr_pct = 100 * hr.mean() if A_s.size else float("nan")
-            title = (f"{s} threshold: A >= {thr:.0f} days/yr  |  "
+            title = (f"{s} threshold: A >= {thr:.0f} days/yr\n"
                      f"{hr_pct:.1f}% of cells high-risk")
-
-        def sq(color, lbl):
-            return Line2D([0], [0], marker="s", linestyle="None", color=color,
-                          markersize=8, label=lbl)
-        if with_burnable:
-            handles = [sq("crimson", "high risk (A ≥ threshold, burnable)"),
-                       sq("0.85", "burnable, not high-risk"),
-                       sq("#6b8fb5", "non-burnable (WHP = 0)")]
-        else:
-            handles = [sq("crimson", "high risk (A ≥ threshold)"),
-                       sq("0.85", "not high-risk (A < threshold)")]
-        ax.legend(handles=handles, loc="lower left", fontsize=8,
-                  framealpha=0.9, borderpad=0.6, handletextpad=0.4).set_zorder(6)
 
         if countries is not None:
             countries.boundary.plot(ax=ax, color="0.2", linewidth=0.8, zorder=4)
@@ -194,6 +198,10 @@ def plot_region(name, cfg, common, with_burnable):
         ax.set_xlim(x0, x1); ax.set_ylim(y0, y1)
         ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
         ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
+
+    fig.legend(handles=handles, loc="outside lower center", ncol=len(handles),
+               fontsize=13, frameon=True, borderpad=0.8, handletextpad=0.6,
+               columnspacing=2.0)
 
     suffix = " (burnable mask)" if with_burnable else ""
     fig.suptitle(f"{cfg['label']}: wildfire high-risk extent from future "
