@@ -3,6 +3,12 @@
 A plain-language walkthrough of what we did and why. For full detail see
 `PROJECT_PLAN_regional_high_risk_maps.md`.
 
+> **Companion approach.** This document covers the maps built from `A`, the
+> *change* in fire weather. A second approach maps **absolute** fire-weather
+> severity instead, with per-region thresholds and no trend information — see
+> `summary_of_methods_absolute_regional_thresholds.md`. The two answer different
+> questions and are not interchangeable.
+
 ## Goal
 Take the existing national map of where fire weather is worsening
 (from the upstream wildfire/ project) and make **zoomed-in versions for two
@@ -56,10 +62,18 @@ Four figures (each = 3 panels for the three thresholds):
 
 | File | Region | Burnable layer |
 |---|---|---|
-| `high_risk_A_p98_socal.png` | Southern California | no |
-| `high_risk_A_p98_tva.png` | TVA | no |
-| `high_risk_A_p98_socal_burnable.png` | Southern California | yes |
-| `high_risk_A_p98_tva_burnable.png` | TVA | yes |
+| `risk_A_p98_socal.png` | Southern California | no |
+| `risk_A_p98_tva.png` | TVA | no |
+| `risk_A_p98_socal_burnable.png` | Southern California | yes |
+| `risk_A_p98_tva_burnable.png` | TVA | yes |
+
+Plus `risk_A_p98_risk_classes.gpkg` — every in-region cell as a square polygon
+(EPSG:4326), layer `risk_classes`, classified `zero` / `low` / `medium` / `high`
+by the highest threshold its `A` value meets (`zero` = below the low threshold).
+Fields: `region`, `lon`, `lat`, `A_days_yr`, `risk_class`, `risk_level` (0–3),
+`whp_burnable`. Note these classes are **bands**, not cumulative: the map panels
+show cumulative extents, so the low panel's crimson area is `low`+`medium`+`high`
+combined.
 
 Headline numbers (share of cells flagged high risk, low → high threshold):
 - **TVA:** 9.9% → 6.0% → 3.9% (78% of the area is burnable).

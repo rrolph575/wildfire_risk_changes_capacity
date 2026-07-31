@@ -21,6 +21,24 @@ against the USFS WHP 90 m raster (EPSG:5070): value 0 = non-burnable
 distinct steel-blue underlay so it is clear which high-risk (crimson) cells sit
 on burnable land.
 
+Outputs (all written to OUT_DIR):
+  * risk_A_p98_socal.png           -- SoCal, 3-panel low/med/high, no mask
+  * risk_A_p98_tva.png             -- TVA, 3-panel low/med/high, no mask
+  * risk_A_p98_socal_burnable.png  -- SoCal, same panels + burnable mask
+  * risk_A_p98_tva_burnable.png    -- TVA, same panels + burnable mask
+  * risk_A_p98_risk_classes.gpkg   -- one vector layer, "risk_classes",
+        holding every in-region grid cell for both regions as a square polygon
+        (EPSG:4326) with a categorical risk class from the same thresholds:
+            zero    A < low threshold
+            low     low <= A < medium
+            medium  medium <= A < high
+            high    A >= high threshold
+        Fields: region, lon, lat, A_days_yr, risk_class, risk_level (0-3, for
+        easy styling), whp_burnable (1 burnable / 0 non-burnable / -1 nodata).
+  * _burnable_cache_<region>.npz        -- cached WHP burnable flags (see below)
+
+The .png filenames follow TAG, so they change with PCTILE.
+
 Run in the `rev` conda env (has geopandas + rasterio + matplotlib):
     conda activate rev
     python regional_high_risk_maps.py
@@ -64,7 +82,7 @@ REGIONS = {
 }
 
 OUT_DIR = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
-TAG = f"high_risk_A_p{PCTILE}"
+TAG = f"risk_A_p{PCTILE}"
 
 
 # ----------------------------------------------------------------------------
@@ -114,6 +132,67 @@ def sample_burnable(name, lon_sub, lat_sub):
     np.savez(cache, cls=cls)
     print("  (burnable flags computed + cached)", end="")
     return cls
+
+
+# ----------------------------------------------------------------------------
+def grid_step(lon, lat):
+    """Grid spacing in degrees, inferred from the unique coordinate values.
+    The source field is a regular lon/lat grid, so this is a single number."""
+    steps = []
+    for v in (lon, lat):
+        u = np.unique(np.round(v, 6))
+        steps.append(np.median(np.diff(u)))
+    return float(np.median(steps))
+
+
+def write_risk_gpkg(common):
+    """One GeoPackage with every in-region cell classified zero/low/medium/high.
+
+    A cell's class is the highest threshold it meets; cells below the "low"
+    threshold are "zero". Cells are written as square polygons (cell-center
+    +/- half the grid step) so they tile without gaps in GIS."""
+    from shapely.geometry import box
+
+    lon, lat, A, _, _ = common
+    half = grid_step(lon, lat) / 2.0
+    order = ["zero"] + SCEN_ORDER                 # zero, low, medium, high
+
+    frames = []
+    for name, cfg in REGIONS.items():
+        (x0, x1), (y0, y1) = cfg["xlim"], cfg["ylim"]
+        inreg = (lon >= x0) & (lon <= x1) & (lat >= y0) & (lat <= y1)
+        lon_s, lat_s, A_s = lon[inreg], lat[inreg], A[inreg]
+
+        # 0 = zero, 1 = low, 2 = medium, 3 = high (highest threshold met).
+        level = np.zeros(A_s.size, dtype=np.int8)
+        for i, s in enumerate(SCEN_ORDER, start=1):
+            level[A_s >= THRESHOLDS[s]] = i
+
+        burn = sample_burnable(name, lon_s, lat_s)
+        gdf = gpd.GeoDataFrame(
+            {"region": name,
+             "lon": lon_s,
+             "lat": lat_s,
+             "A_days_yr": A_s.astype(float),
+             "risk_level": level,
+             "risk_class": np.array(order, dtype=object)[level],
+             "whp_burnable": burn.astype(int)},
+            geometry=[box(x - half, y - half, x + half, y + half)
+                      for x, y in zip(lon_s, lat_s)],
+            crs="EPSG:4326")
+        counts = {s: int((gdf["risk_class"] == s).sum()) for s in order}
+        print(f"[{name}] gpkg cells: {counts}")
+        frames.append(gdf)
+
+    out = os.path.join(OUT_DIR, f"{TAG}_risk_classes.gpkg")
+    gpd.GeoDataFrame(pd_concat(frames), crs="EPSG:4326").to_file(
+        out, layer="risk_classes", driver="GPKG")
+    print(f"  saved -> {out}")
+
+
+def pd_concat(frames):
+    import pandas as pd
+    return pd.concat(frames, ignore_index=True)
 
 
 # ----------------------------------------------------------------------------
@@ -222,6 +301,7 @@ def main():
         plot_region(name, cfg, common, with_burnable=False)
     for name, cfg in REGIONS.items():
         plot_region(name, cfg, common, with_burnable=True)
+    write_risk_gpkg(common)
 
 
 if __name__ == "__main__":

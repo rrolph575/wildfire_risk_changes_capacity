@@ -107,10 +107,10 @@ Written to `/projects/alcaps/bfuchs/wildfire_risk_changes_capacity/`:
 
 | # | File | Region | Burnable mask |
 |---|---|---|---|
-| 1 | `high_risk_A_p98_socal.png` | SoCal | no |
-| 2 | `high_risk_A_p98_tva.png` | TVA | no |
-| 3 | `high_risk_A_p98_socal_burnable.png` | SoCal | yes |
-| 4 | `high_risk_A_p98_tva_burnable.png` | TVA | yes |
+| 1 | `risk_A_p98_socal.png` | SoCal | no |
+| 2 | `risk_A_p98_tva.png` | TVA | no |
+| 3 | `risk_A_p98_socal_burnable.png` | SoCal | yes |
+| 4 | `risk_A_p98_tva_burnable.png` | TVA | yes |
 
 Plus the code: `regional_high_risk_maps.py`, `submit_regional_high_risk_maps.sh`
 (SLURM), `build_results_deck.py` → `wildfire_high_risk_results.pptx`.
