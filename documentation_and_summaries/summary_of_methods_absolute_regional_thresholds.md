@@ -1,9 +1,9 @@
 # Summary of methods: regional risk maps from absolute fire-weather severity
 
 A plain-language walkthrough of the **second** mapping approach, produced by
-`regional_absolute_risk_maps.py`. The first approach (`regional_high_risk_maps.py`)
-is described in `summary_of_methods.md`; this is a companion to it, not a
-replacement — the two answer different questions.
+`regional_absolute_risk_maps.py` — the method this project now uses. The earlier
+`A`-based approach it replaced is described in `summary_of_methods.md`; its code
+and outputs have since been removed from the repo (see the last section).
 
 ## Why we made a second version
 
@@ -39,6 +39,29 @@ is the very threshold the first approach counted exceedances against.
 > below are over **space** across cells (which cells) and are only used to pick the
 > cutoff numbers. They do not interact.
 
+## The two regions
+
+Both regions use the same lat/lon boxes as the first approach. Recorded here
+because the boxes are load-bearing for this method too — the cutoffs are derived
+from whatever cells fall inside them, so changing a box changes the thresholds.
+
+**TVA coverage area** — the box comes from the bus lat/lon span in
+`tva_bus_geographic_data.csv` (latitude 33.298 → 37.260, longitude −90.049 →
+−82.808), padded by ~0.25° so edge buses aren't clipped:
+
+- `xlim = (-90.30, -82.55)`, `ylim = (33.05, 37.51)`
+
+**Southern California** — a standard SoCal extent covering San Diego / LA /
+Inland Empire / southern Central Valley:
+
+- `xlim = (-121.0, -114.0)`, `ylim = (32.5, 35.5)`
+
+*This standard box was adopted because the originally supplied coordinates were
+unusable: the upper-left and lower-right corners were identical —
+`(36.091326, -122.19206)` — giving a zero-area box, and that point sits on the
+**central** California coast near Monterey, not in Southern California. The
+standard extent was confirmed as the replacement.*
+
 ## Land mask (this matters — it moved the numbers)
 
 The FWI grid is a full lat/lon rectangle, so it carries real values **over the
@@ -66,13 +89,19 @@ national cutoff would leave TVA with zero medium and zero high cells.
 Cutoffs are read off the **50th / 75th / 90th percentile of hist-p98 among that
 region's own land cells**, then applied as plain absolute FWI cutoffs:
 
-| Region | low (≥) | medium (≥) | high (≥) |
-|---|---|---|---|
-| Southern California | 98.6 | 111.7 | 125.2 |
-| TVA | 35.1 | 38.8 | 40.8 |
+| class | spatial percentile threshold | SoCal 98th percentile historical FWI | TVA 98th percentile historical FWI | share of land cells |
+|---|---|---|---|---|
+| none | below 50th | < 98.6 | < 35.1 | 50% |
+| low | 50th–75th | 98.6 – 111.7 | 35.1 – 38.8 | 25% |
+| medium | 75th–90th | 111.7 – 125.2 | 38.8 – 40.8 | 15% |
+| high | ≥ 90th | ≥ 125.2 | ≥ 40.8 | 10% |
 
-A cell is **none** below the low cutoff, otherwise the highest class it reaches.
-By construction this is a 50 / 25 / 15 / 10 % split of each region's land cells.
+A cell's class is the **highest** cutoff it clears, so a high cell also clears
+the low and medium ones. The bands narrow going up (50 → 25 → 15 → 10% of
+cells) so that "high" stays selective enough to act on. The three percentiles
+are one line in the script — `CLASS_QUANTILES` in
+`regional_absolute_risk_maps.py` — and both regions' cutoffs and shares follow
+automatically if they are changed.
 
 > ⚠️ **The classes are region-relative.** A SoCal "high" cell (FWI ≥ 125) is far
 > more severe fire weather than a TVA "high" cell (FWI ≥ 41). They are *not*
@@ -137,18 +166,24 @@ west-to-east, with the western (Mississippi/west-Tennessee) end most severe.
 
 - Runs in the **`rev`** conda env (needs geopandas + matplotlib; rasterio only if
   the burnable cache has to be rebuilt).
-- Reuses `sample_burnable()` and `grid_step()` from `regional_high_risk_maps.py`,
-  so the burnable flags and cell geometry are **identical** between the two
-  approaches and the `_burnable_cache_<region>.npz` files are shared.
+- **Self-contained:** `sample_burnable()` writes and reads the
+  `_burnable_cache_<region>.npz` files itself, so no other script is needed.
+  Deleting the caches is safe — they rebuild from the WHP raster on the next run
+  in `rev` (~71 KB, a few seconds).
 - **No SLURM allocation needed:** the whole script takes **20 seconds** and peaks
   at **235 MB** of RAM — fine to run directly.
 
-## Which approach to use
+## Note on the retired approach
 
-| Question | Use |
-|---|---|
-| Where is fire weather *getting worse* fastest? | `regional_high_risk_maps.py` (`A`) |
-| Where is fire weather *actually severe*? | this script (historical p98 FWI) |
+The earlier `A`-based method (`regional_high_risk_maps.py`, its submit script,
+and the `risk_A_p98_*` outputs) was **removed from the repo on 2026-08-03** in
+favour of this one, for the reasons in the first section — `A` cannot express
+absolute severity, and in TVA it runs backwards to it. `summary_of_methods.md`
+and `PROJECT_PLAN_regional_high_risk_maps.md` are kept as the record of that
+method, and describe files that no longer exist. The old results deck was
+renamed `old_using_trend_method_wildfire_high_risk_results.pptx`.
 
-They are not interchangeable, and in TVA they disagree by construction — see the
-correlation table at the top.
+Nothing was lost from the input side: neither method ever computed the p98
+itself. Both only read arrays from the same upstream file — the retired one used
+`A_maps`, this one uses `pct_maps` — and both are still there. Everything
+deleted is recoverable from git history at commit `c94f6be`.

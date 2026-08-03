@@ -2,16 +2,16 @@
 Regional wildfire risk maps from ABSOLUTE fire-weather severity (SoCal + TVA),
 with and without a burnable / non-burnable mask.
 
-Companion to regional_high_risk_maps.py. That script classifies a cell by the
-future exceedance rate A; this one classifies a cell by how severe its fire
-weather is in absolute terms, with no future/trend information at all.
+Classifies each cell by how severe its fire weather is in absolute terms, with
+no future/trend information at all.
 
-WHY A SEPARATE SCRIPT
-    In the A-based maps every cell is compared against *its own* historical p98,
-    so the historical exceedance count B is ~7.3 days/yr everywhere by
-    construction (2% of 365) and A therefore measures only the *change* at that
-    cell. In these two regions A carries essentially no information about
-    absolute severity:
+WHY NOT THE EXCEEDANCE RATE `A`
+    This project previously mapped `A`, the future (2025-2059) count of days/yr
+    above each cell's own historical p98. That approach was retired: because
+    every cell is compared against *its own* bar, the historical exceedance
+    count B is ~7.3 days/yr everywhere by construction (2% of 365), so A
+    measures only the *change* at that cell. In these two regions A carries
+    essentially no information about absolute severity:
         corr(A, historical p98 FWI) = +0.005 (SoCal),  -0.487 (TVA)
     The TVA correlation is *negative*: the mildest cells have the lowest bar to
     clear, so they gain exceedance days fastest and light up as "high risk".
@@ -68,9 +68,8 @@ Outputs (all written to OUT_DIR):
 
 Filenames follow TAG, so they change with PCTILE.
 
-Reuses sample_burnable() / grid_step() from regional_high_risk_maps.py, so the
-burnable flags and cell geometry are identical between the two projects (the
-_burnable_cache_<region>.npz files are shared).
+Self-contained: sample_burnable() writes/reads the _burnable_cache_<region>.npz
+files itself, so no other script in this project is needed to run it.
 
 Run in the `rev` conda env (has geopandas + rasterio + matplotlib):
     conda activate rev
@@ -84,7 +83,11 @@ from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 import geopandas as gpd
 
-from regional_high_risk_maps import sample_burnable, grid_step
+# NOTE: `rasterio` is imported lazily inside sample_burnable() so the plotting
+# pipeline can run in the `reeds2` env (no rasterio). The WHP burnable flags are
+# cached to an .npz per region; regenerate the cache once in the `rev` env
+# (which has rasterio) by deleting the cache files or running:
+#   conda run -n rev python regional_absolute_risk_maps.py
 
 # ----------------------------------------------------------------------------
 # Config
@@ -92,6 +95,8 @@ from regional_high_risk_maps import sample_burnable, grid_step
 NPZ_PATH = ("/projects/rev/projects/ntps/fy26/underground_transmission/"
             "data/fwi/fwi_tc_AminusB_pcthist2000_2014_cnt2025_2059_maps.npz")
 STATES_PATH = "/projects/rev/projects/scapes/maps/conus_state_boundaries.gpkg"
+WHP_PATH = ("/projects/rev/projects/ntps/fy26/underground_transmission/data/"
+            "rasters/wildfire/resampled/wildfire_hazard_potential_conus_90m.tif")
 
 PCTILE = 98                          # historical percentile that defines "a bad
                                      # fire-weather day" (98th -> worst 2%)
@@ -119,7 +124,10 @@ NB_COLOR = "#6b8fb5"                 # non-burnable underlay (matches sibling)
 OCEAN_COLOR = "#dbe7f0"
 LAND_COLOR = "#fbfaf7"
 
-# Region extents (lon/lat, EPSG:4326) -- same boxes as regional_high_risk_maps.
+# Region extents (lon/lat, EPSG:4326). TVA is the bus span from
+# tva_bus_geographic_data.csv padded ~0.25 deg; SoCal is a standard box. See
+# documentation_and_summaries/summary_of_methods_absolute_regional_thresholds.md
+# -- the boxes are load-bearing, since the cutoffs come from the cells inside.
 REGIONS = {
     "socal": {"label": "Southern California",
               "xlim": (-121.0, -114.0), "ylim": (32.5, 35.5)},
@@ -129,6 +137,50 @@ REGIONS = {
 
 OUT_DIR = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
 TAG = f"abs_risk_hist_p{PCTILE}"
+
+
+# ----------------------------------------------------------------------------
+def sample_burnable(name, lon_sub, lat_sub):
+    """Per-point burnable class from the WHP raster (nearest 90 m cell):
+    1 = burnable (WHP > 0), 0 = non-burnable (WHP == 0), -1 = nodata/off-raster.
+
+    The -1 class is what the land mask keys on: the WHP raster covers CONUS
+    land only, so ocean and Mexico come back as nodata. See region_cells().
+
+    Cached to `_burnable_cache_<name>.npz` so this only needs rasterio (the
+    `rev` env) on first run; later runs (e.g. in `reeds2`) load the cache. Call
+    it with the full in-region rectangle, never a masked subset, or the cached
+    array will be rewritten at the wrong length."""
+    cache = os.path.join(OUT_DIR, f"_burnable_cache_{name}.npz")
+    if os.path.exists(cache):
+        c = np.load(cache)
+        if c["cls"].shape[0] == lon_sub.shape[0]:
+            print("  (burnable flags from cache)", end="")
+            return c["cls"]
+
+    import rasterio                                   # lazy: rev env only
+    from rasterio.warp import transform as warp_transform
+    with rasterio.open(WHP_PATH) as r:
+        nodata = r.nodata
+        xs, ys = warp_transform("EPSG:4326", r.crs.to_string(),
+                                list(lon_sub), list(lat_sub))
+        vals = np.fromiter((v[0] for v in r.sample(zip(xs, ys))),
+                           dtype=np.int64, count=len(xs))
+    cls = np.where(vals > 0, 1, 0).astype(np.int8)
+    cls[vals == nodata] = -1
+    np.savez(cache, cls=cls)
+    print("  (burnable flags computed + cached)", end="")
+    return cls
+
+
+def grid_step(lon, lat):
+    """Grid spacing in degrees, inferred from the unique coordinate values.
+    The source field is a regular lon/lat grid, so this is a single number."""
+    steps = []
+    for v in (lon, lat):
+        u = np.unique(np.round(v, 6))
+        steps.append(np.median(np.diff(u)))
+    return float(np.median(steps))
 
 
 # ----------------------------------------------------------------------------
