@@ -2,8 +2,15 @@
 
 A plain-language walkthrough of the **second** mapping approach, produced by
 `regional_absolute_risk_maps.py` — the method this project now uses. The earlier
-`A`-based approach it replaced is described in `summary_of_methods.md`; its code
+`A`-based approach it replaced is described in `archive/summary_of_methods.md`; its code
 and outputs have since been removed from the repo (see the last section).
+
+> **Downstream use.** The risk classes produced here feed the transmission
+> routing cost penalty in `summary_of_methods_transmission_cost_penalty.md`.
+>
+> **Projected version.** The same classification run on the 2025–2059 field,
+> with these cutoffs held fixed so the shift is visible, is described in
+> `summary_of_methods_future_projected_risk.md`.
 
 ## Why we made a second version
 
@@ -75,7 +82,7 @@ anything. Effect:
 | | SoCal median cell | SoCal cells |
 |---|---|---|
 | including ocean | FWI 83.5 | 26,643 |
-| **land only (used)** | **FWI 98.6** | **19,407** |
+| **land only (used)** | **FWI 98.7** | **19,407** |
 
 TVA is entirely inland, so its numbers are unchanged (43,725 cells).
 
@@ -91,10 +98,21 @@ region's own land cells**, then applied as plain absolute FWI cutoffs:
 
 | class | spatial percentile threshold | SoCal 98th percentile historical FWI | TVA 98th percentile historical FWI | share of land cells |
 |---|---|---|---|---|
-| none | below 50th | < 98.6 | < 35.1 | 50% |
-| low | 50th–75th | 98.6 – 111.7 | 35.1 – 38.8 | 25% |
-| medium | 75th–90th | 111.7 – 125.2 | 38.8 – 40.8 | 15% |
+| none | below 50th | < 98.7 | < 35.1 | 50% |
+| low | 50th–75th | 98.7 – 111.8 | 35.1 – 38.8 | 25% |
+| medium | 75th–90th | 111.8 – 125.2 | 38.8 – 40.8 | 15% |
 | high | ≥ 90th | ≥ 125.2 | ≥ 40.8 | 10% |
+
+> **Rebuilt 2026-08-18** on the re-released Sup3rCC `fwi_tc` (2026-08-05,
+> same `v0.2.2` path). The historical field barely moved — TVA's cutoffs are
+> unchanged at 1 dp, SoCal's low/medium rose by 0.1. Full precision, as
+> carried in the GeoPackage's `cut_*` columns and used by everything
+> downstream:
+>
+> ```
+> tva     35.134499 / 38.780228 / 40.775414
+> socal   98.709900 / 111.765953 / 125.249133
+> ```
 
 A cell's class is the **highest** cutoff it clears, so a high cell also clears
 the low and medium ones. The bands narrow going up (50 → 25 → 15 → 10% of
@@ -108,6 +126,35 @@ automatically if they are changed.
 > comparable across regions. Setting `FIXED_CUTOFFS` in the script switches both
 > regions onto one shared yardstick if that comparison is ever needed — note that
 > on a CONUS-wide yardstick TVA has no medium or high cells at all.
+>
+> **This was a deliberate choice, made with the numbers below in hand** — the
+> point of the method is to find the worst ground *within* each region, and both
+> regions needing their own thresholds is accepted.
+
+### How these values compare to the published FWI scale
+
+The source data is the **Canadian Fire Weather Index** (the Sup3rCC `fwi_tc`
+dataset attributes give `units: dimensionless`, `scale_factor: 1`), so the
+standard EFFIS/JRC fire-danger classes apply to these numbers directly:
+
+| EFFIS class | FWI | share of TVA cells | share of SoCal cells |
+|---|---|---|---|
+| moderate | 11.2 – 21.3 | 2% | — |
+| high | 21.3 – 38.0 | 67% | 3% |
+| very high | 38.0 – 50.0 | 31% | 6% |
+| extreme | ≥ 50 | 0% | **92%** |
+
+So the two regions genuinely occupy different parts of the absolute scale: TVA's
+worst cell (47.4) never reaches "extreme", while SoCal's median cell (98.7) is
+about twice the extreme threshold. Anchoring both regions to the EFFIS
+breakpoints instead would give TVA 0% high and SoCal 92% high — which is exactly
+why per-region cutoffs are used.
+
+*Caveat on validating against real fires:* the Sup3rCC historical run is a
+GCM-driven downscaling, not a reanalysis. Its daily weather is simulated, so no
+day in it corresponds to an actual historical fire — only the climatological
+distribution is meaningful. Tying FWI values to real fire events would need a
+reanalysis-based FWI (e.g. ERA5-derived) joined to fire perimeters.
 
 ## Steps we took
 
@@ -178,8 +225,8 @@ west-to-east, with the western (Mississippi/west-Tennessee) end most severe.
 The earlier `A`-based method (`regional_high_risk_maps.py`, its submit script,
 and the `risk_A_p98_*` outputs) was **removed from the repo on 2026-08-03** in
 favour of this one, for the reasons in the first section — `A` cannot express
-absolute severity, and in TVA it runs backwards to it. `summary_of_methods.md`
-and `PROJECT_PLAN_regional_high_risk_maps.md` are kept as the record of that
+absolute severity, and in TVA it runs backwards to it. `archive/summary_of_methods.md`
+and `archive/PROJECT_PLAN_regional_high_risk_maps.md` are kept as the record of that
 method, and describe files that no longer exist. The old results deck was
 renamed `old_using_trend_method_wildfire_high_risk_results.pptx`.
 

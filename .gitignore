@@ -7,3 +7,16 @@ __pycache__/
 
 # Org slide template (large; keep locally, not committed)
 Template.pptx
+
+# Pre-rebuild snapshot of outputs/, kept on disk for before/after comparison
+# after the 2026-08-05 fwi_tc re-release. Superseded by outputs/ and the
+# numbers are recorded in documentation_and_summaries/ — not worth 197 MB of
+# permanent git history.
+outputs_fwi_pre20260805/
+
+# Penalised 90 m cost rasters: ~29 MB each, three of them, and they are the
+# ROUTING INPUT rather than a result. Fully reproducible in ~1 min via
+#   sbatch submit_transmission_cost_risk_penalty.sh
+# Binary and non-delta-compressing, so every regeneration would add a full
+# copy to git history forever. The per-cell summary .gpkg IS committed.
+outputs/**/tva_cost_risk_penalty_90m.tif

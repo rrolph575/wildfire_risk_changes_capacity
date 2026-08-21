@@ -55,7 +55,8 @@ LAND MASK (matters -- it moves the cutoffs)
     so the plain and _burnable maps use identical class boundaries and both
     agree with the GeoPackage.
 
-Outputs (all written to OUT_DIR):
+Outputs (written to OUT_DIR/outputs/risk_<historical|future>/,
+per FIELD_SOURCE; the shared _burnable_cache_*.npz stay in OUT_DIR):
   * abs_risk_hist_p98_socal.png           -- SoCal, 4-class map, no mask
   * abs_risk_hist_p98_tva.png             -- TVA, 4-class map, no mask
   * abs_risk_hist_p98_socal_burnable.png  -- SoCal, same map + burnable mask
@@ -92,22 +93,52 @@ import geopandas as gpd
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
-NPZ_PATH = ("/projects/rev/projects/ntps/fy26/underground_transmission/"
-            "data/fwi/fwi_tc_AminusB_pcthist2000_2014_cnt2025_2059_maps.npz")
+# Historical p-th percentile FWI, built by historical_fwi_percentiles.py in
+# this project. Previously this read `pct_maps` out of the upstream
+# fwi_tc_AminusB_*.npz -- but that file's headline product is the retired A-B
+# trend metric, we only ever used one of its seven arrays, and producing it
+# required reading the future run too. The replacement reads only the 15
+# historical files and carries a source-vintage stamp.
+NPZ_PATH = ("/projects/alcaps/bfuchs/wildfire_risk_changes_capacity/outputs/"
+            "risk_historical/fwi_tc_hist2000_2014_percentiles.npz")
 STATES_PATH = "/projects/rev/projects/scapes/maps/conus_state_boundaries.gpkg"
 WHP_PATH = ("/projects/rev/projects/ntps/fy26/underground_transmission/data/"
             "rasters/wildfire/resampled/wildfire_hazard_potential_conus_90m.tif")
 
-PCTILE = 98                          # historical percentile that defines "a bad
+# Which period's p-th percentile FWI field to classify.
+#   "historical" -- 2000-2014, from NPZ_PATH `pct_maps`. Cutoffs are derived
+#                   from the field itself via CLASS_QUANTILES.
+#   "future"     -- 2025-2059 ssp245, from FUTURE_NPZ `fut_pct_maps`, built by
+#                   future_fwi_projected_hazard.py. Cutoffs are NOT re-derived:
+#                   they are held fixed at the historical ones (see below).
+FIELD_SOURCE = "future"
+
+_PROJ = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
+FUTURE_NPZ = os.path.join(_PROJ, "outputs", "risk_future",
+                          "fwi_tc_future2025_2059_projected_hazard.npz")
+HIST_CLASSES_GPKG = os.path.join(_PROJ, "outputs", "risk_historical",
+                                 "abs_risk_hist_p98_risk_classes.gpkg")
+
+PCTILE = 98                          # percentile that defines "a bad
                                      # fire-weather day" (98th -> worst 2%)
 
 # Spatial percentiles, within each region, used to pick that region's cutoffs.
+# Only used when the cutoffs are derived (FIELD_SOURCE = "historical").
 CLASS_QUANTILES = {"low": 50, "medium": 75, "high": 90}
 
-# Set to a dict to override the derived cutoffs with fixed absolute FWI values,
-# e.g. {"socal": {"low": 60, "medium": 90, "high": 120},
-#       "tva":   {"low": 30, "medium": 36, "high": 41}}
-# or the same numbers for both regions for a single cross-region yardstick.
+# Fixed absolute FWI cutoffs per region, or None to derive them.
+#
+# CRITICAL for FIELD_SOURCE = "future": the cutoffs must stay FIXED at the
+# historical values, not be re-derived from the future field. Re-deriving would
+# force the same 50/25/15/10 split by construction, and since warming is
+# roughly uniform in space the ranking barely moves -- the map would look
+# almost identical to the historical one and the projection signal would
+# vanish entirely. Holding them fixed lets the class shares move, so "more
+# cells now clear today's high bar" IS the result.
+#
+# Left None below: main() loads the exact historical cutoffs from the
+# cut_low / cut_medium / cut_high columns of HIST_CLASSES_GPKG, so the two
+# products cannot drift apart.
 FIXED_CUTOFFS = None
 
 CLASS_ORDER = ["none", "low", "medium", "high"]
@@ -135,8 +166,15 @@ REGIONS = {
               "xlim": (-90.30, -82.55), "ylim": (33.05, 37.51)},
 }
 
-OUT_DIR = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
-TAG = f"abs_risk_hist_p{PCTILE}"
+# OUT_DIR holds the shared burnable caches (both field sources use the same
+# ones). The maps and GeoPackage go to a per-method subfolder so the historical
+# and future products stay separated.
+OUT_DIR = _PROJ
+PRODUCT_DIR = os.path.join(
+    OUT_DIR, "outputs",
+    "risk_historical" if FIELD_SOURCE == "historical" else "risk_future")
+TAG = (f"abs_risk_hist_p{PCTILE}" if FIELD_SOURCE == "historical"
+       else f"abs_risk_future_p{PCTILE}")
 
 
 # ----------------------------------------------------------------------------
@@ -184,16 +222,48 @@ def grid_step(lon, lat):
 
 
 # ----------------------------------------------------------------------------
+def hist_cutoffs():
+    """The exact per-region cutoffs the historical classes were built with.
+
+    Read from the historical GeoPackage rather than hardcoded, so the future
+    classification cannot drift away from the historical one it is measured
+    against."""
+    g = gpd.read_file(HIST_CLASSES_GPKG, layer="risk_classes")
+    cuts = {}
+    for name in REGIONS:
+        r = g[g["region"] == name]
+        if r.empty:
+            raise SystemExit(f"no '{name}' rows in {HIST_CLASSES_GPKG}")
+        cuts[name] = {k: float(r[f"cut_{k}"].iloc[0])
+                      for k in ("low", "medium", "high")}
+    return cuts
+
+
 def load_common():
-    """Historical p-th percentile FWI per cell, plus the basemap layers."""
-    d = np.load(NPZ_PATH, allow_pickle=True)
+    """The p-th percentile FWI field to classify, plus the basemap layers."""
+    days = None
+    if FIELD_SOURCE == "historical":
+        d = np.load(NPZ_PATH, allow_pickle=True)
+        pex = list(d["percentiles"].astype(int))
+        P = d["pct_maps"][pex.index(PCTILE)]
+        base = tuple(int(v) for v in d["hist_window"])
+    elif FIELD_SOURCE == "future":
+        d = np.load(FUTURE_NPZ, allow_pickle=True)
+        pex = list(d["percentiles"].astype(int))
+        P = d["fut_pct_maps"][pex.index(PCTILE)]
+        base = tuple(int(v) for v in d["future_window"])
+        # days/yr above each fixed absolute threshold, keyed "<region>_<level>"
+        days = {str(k): v for k, v in zip(d["abs_threshold_labels"],
+                                          d["days_per_year_maps"])}
+    else:
+        raise SystemExit(f"FIELD_SOURCE must be historical/future, "
+                         f"got {FIELD_SOURCE!r}")
     lat, lon = d["lat"], d["lon"]
-    pex = list(d["percentiles"].astype(int))
-    P = d["pct_maps"][pex.index(PCTILE)]       # historical p98 FWI value
     finite = np.isfinite(P)
     lon, lat, P = lon[finite], lat[finite], P[finite]
-    base = tuple(int(v) for v in d["pct_baseline"])
-    print(f"Loaded historical p{PCTILE} FWI ({base[0]}-{base[1]}): "
+    if days is not None:                      # same mask, so indices stay aligned
+        days = {k: v[finite] for k, v in days.items()}
+    print(f"Loaded {FIELD_SOURCE} p{PCTILE} FWI ({base[0]}-{base[1]}): "
           f"{P.size:,} finite cells (range {P.min():.1f}-{P.max():.1f})")
 
     states = gpd.read_file(STATES_PATH).to_crs(4326)
@@ -204,7 +274,7 @@ def load_common():
     except Exception as e:                     # deprecated in newer geopandas
         print(f"  (skipping country borders: {e})")
     return {"lon": lon, "lat": lat, "P": P, "states": states,
-            "countries": countries, "baseline": base,
+            "countries": countries, "baseline": base, "days": days,
             "step": grid_step(lon, lat)}
 
 
@@ -237,9 +307,16 @@ def region_cells(name, cfg, common):
             "nx": int(np.rint((lon_s.max() - lon0) / step)) + 1,
             "ny": int(np.rint((lat_s.max() - lat0) / step)) + 1}
 
+    days_s = None
+    if common.get("days") is not None:
+        days_s = {lvl: common["days"][f"{name}_{lvl}"][inreg]
+                  for lvl in ("low", "medium", "high")}
+
     burn = sample_burnable(name, lon_s, lat_s)   # 1 burnable, 0 non, -1 nodata
     land = burn != -1
     lon_s, lat_s, P_s, burn = lon_s[land], lat_s[land], P_s[land], burn[land]
+    if days_s is not None:
+        days_s = {k: v[land] for k, v in days_s.items()}
 
     if FIXED_CUTOFFS is not None:
         cuts = {k: float(v) for k, v in FIXED_CUTOFFS[name].items()}
@@ -252,7 +329,7 @@ def region_cells(name, cfg, common):
     for i, s in enumerate(CLASS_ORDER[1:], start=1):
         level[P_s >= cuts[s]] = i
     return {"lon": lon_s, "lat": lat_s, "P": P_s, "burn": burn,
-            "cuts": cuts, "level": level, "grid": grid}
+            "cuts": cuts, "level": level, "grid": grid, "days": days_s}
 
 
 def rasterize(r, code, step):
@@ -362,9 +439,11 @@ def plot_region(name, cfg, common, with_burnable):
 
     suffix = " (burnable mask)" if with_burnable else ""
     fig.suptitle(f"{cfg['label']}: wildfire risk from absolute fire-weather "
-                 f"severity\n(historical {b0}-{b1} p{PCTILE} FWI, no trend "
-                 f"information){suffix}", fontsize=12)
-    out = os.path.join(OUT_DIR,
+                 f"severity\n({FIELD_SOURCE} {b0}-{b1} p{PCTILE} FWI"
+                 + (", cutoffs fixed at historical" if FIELD_SOURCE == "future"
+                    else ", no trend information")
+                 + f"){suffix}", fontsize=12)
+    out = os.path.join(PRODUCT_DIR,
                        f"{TAG}_{name}{'_burnable' if with_burnable else ''}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -391,13 +470,19 @@ def write_risk_gpkg(common):
             {"region": name,
              "lon": lon_s,
              "lat": lat_s,
-             "hist_p98_fwi": P_s.astype(float),
+             f"{'hist' if FIELD_SOURCE == 'historical' else 'future'}"
+             f"_p{PCTILE}_fwi": P_s.astype(float),
              "risk_level": level,
              "risk_class": np.array(CLASS_ORDER, dtype=object)[level],
              "whp_burnable": burn.astype(int),
              "cut_low": cuts["low"],
              "cut_medium": cuts["medium"],
-             "cut_high": cuts["high"]},
+             "cut_high": cuts["high"],
+             # days/yr in the future window above each of those fixed cutoffs.
+             # Only present for FIELD_SOURCE = "future"; NaN-filled otherwise.
+             **({f"days_per_year_{lvl}": r["days"][lvl]
+                 for lvl in ("low", "medium", "high")}
+                if r.get("days") is not None else {})},
             geometry=[box(x - half, y - half, x + half, y + half)
                       for x, y in zip(lon_s, lat_s)],
             crs="EPSG:4326")
@@ -405,7 +490,7 @@ def write_risk_gpkg(common):
         print(f"[{name}] gpkg cells: {counts}")
         frames.append(gdf)
 
-    out = os.path.join(OUT_DIR, f"{TAG}_risk_classes.gpkg")
+    out = os.path.join(PRODUCT_DIR, f"{TAG}_risk_classes.gpkg")
     gpd.GeoDataFrame(pd.concat(frames, ignore_index=True),
                      crs="EPSG:4326").to_file(
         out, layer="risk_classes", driver="GPKG")
@@ -414,7 +499,14 @@ def write_risk_gpkg(common):
 
 # ----------------------------------------------------------------------------
 def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
+    global FIXED_CUTOFFS
+    os.makedirs(PRODUCT_DIR, exist_ok=True)
+    if FIELD_SOURCE == "future" and FIXED_CUTOFFS is None:
+        FIXED_CUTOFFS = hist_cutoffs()
+        print("Cutoffs held fixed at the historical values (not re-derived):")
+        for n, c in FIXED_CUTOFFS.items():
+            print(f"  {n:6s} low {c['low']:.1f}  medium {c['medium']:.1f}  "
+                  f"high {c['high']:.1f}")
     common = load_common()
     for name, cfg in REGIONS.items():
         plot_region(name, cfg, common, with_burnable=False)
