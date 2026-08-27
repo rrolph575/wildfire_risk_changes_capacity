@@ -72,6 +72,7 @@ import geopandas as gpd
 import rasterio
 from rasterio.windows import Window
 from rasterio.features import rasterize
+from region_inputs import region_input
 
 # ----------------------------------------------------------------------------
 # Config
@@ -100,20 +101,24 @@ _SOURCES = {
     # the fire-weather-only class so both inputs stay traceable, and puts the
     # combined answer in `combined_class`. Read the right one.
     "future_with_fuel": ("risk_future_with_fuel",
-                         "abs_risk_future_fuel_tva_risk_classes.gpkg",
+                         "abs_risk_future_fuel_{region}_risk_classes.gpkg",
                          "combined_class"),
 }
 if RISK_SOURCE not in _SOURCES:
     raise SystemExit(f"RISK_SOURCE must be one of {sorted(_SOURCES)}, "
                      f"got {RISK_SOURCE!r}")
+# Region to cost. Env-driven, matching combine_fwi_fuel_risk.py and
+# landfire_fuel_composition.py, so one script serves both:
+#   REGION=socal RISK_SOURCE=future_with_fuel python transmission_cost_risk_penalty.py
+# SoCal will stop with a clear message until its routing inputs are supplied --
+# see region_inputs.py.
+REGION = os.environ.get("REGION", "tva")
+
 _sub, _fname, CLASS_COL = _SOURCES[RISK_SOURCE]
-RISK_GPKG = os.path.join(OUT_DIR, "outputs", _sub, _fname)
+RISK_GPKG = os.path.join(OUT_DIR, "outputs", _sub, _fname.format(region=REGION))
 PRODUCT_DIR = os.path.join(OUT_DIR, "outputs", f"cost_penalty_{RISK_SOURCE}")
 RISK_LAYER = "risk_classes"
-COST_TIF = ("/kfs2/projects/rev/projects/sienna_transmission/tva_lcp/"
-            "tva_lcp_default_agg_costs.tif")
-
-REGION = "tva"
+COST_TIF = region_input(REGION, "cost_tif")
 RISK_MULTIPLIER = {"none": 1.0, "low": 1.1, "medium": 1.3, "high": 1.5}
 
 # Keep routes inside the region. With True, cost cells outside the risk
@@ -125,11 +130,10 @@ EXCLUDE_OUTSIDE_REGION = True
 # Routes whose endpoints are not both inside the region are dropped. Note this
 # is a guard, not a filter that currently bites: the TVA box was derived from
 # the bus span padded ~0.25 deg, so every bus is inside it by construction.
-ROUTES_CSV = ("/kfs2/projects/rev/projects/sienna_transmission/tva_lcp/"
-              "tva_routes.csv")
+ROUTES_CSV = region_input(REGION, "routes_csv")
 
 BLOCK_ROWS = 1024          # rows of 90 m raster processed at a time
-TAG = "tva_cost_risk_penalty"
+TAG = f"{REGION}_cost_risk_penalty"
 
 
 # ----------------------------------------------------------------------------

@@ -34,4 +34,11 @@ cd /projects/alcaps/bfuchs/wildfire_risk_changes_capacity
 mkdir -p logs
 
 conda activate rev
-python landfire_fuel_composition.py
+
+# Regions to tally. Override at submit time, e.g.
+#   sbatch --export=ALL,REGIONS="socal" submit_landfire_fuel_composition.sh
+for reg in ${REGIONS:-tva}; do
+    echo "===================== REGION = $reg ====================="
+    REGION=$reg python landfire_fuel_composition.py
+    echo
+done

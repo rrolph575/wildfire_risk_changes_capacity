@@ -45,7 +45,7 @@ Run as a batch job (reads ~940 MB over a 468 M-cell window):
     sbatch submit_landfire_fuel_composition.sh
 
 Outputs (to outputs/risk_future_with_fuel/):
-  * tva_fuel_composition.gpkg -- layer "fuel_composition", one polygon per risk
+  * <region>_fuel_composition.gpkg -- layer "fuel_composition", one polygon per risk
         cell with: region, n_lf_pixels, frac_nonburnable, frac_GR, frac_GS,
         frac_SH, frac_TU, frac_TL, frac_SB, frac_burnable, dominant_family,
         and the non-burnable split frac_nb_urban / _water / _agriculture.
@@ -67,7 +67,14 @@ RISK_LAYER = "risk_classes"
 LANDFIRE = os.path.expandvars(
     "/scratch/$USER/landfire/LF2024_FBFM40_CONUS.tif")
 PRODUCT_DIR = os.path.join(PROJ, "outputs", "risk_future_with_fuel")
-REGION = "tva"
+
+# Region to tally. Env-overridable so one script serves both without edits:
+#   REGION=socal python landfire_fuel_composition.py
+# NOTE the fuel INDEX and its cutoffs are chosen per region downstream --
+# `woody` was picked because it discriminates in TVA's timber-litter country
+# and may separate nothing in SoCal chaparral. This script only measures
+# composition, which is region-agnostic.
+REGION = os.environ.get("REGION", "tva")
 BLOCK_ROWS = 2048
 
 # Scott & Burgan 40 families, by code range.
@@ -179,7 +186,7 @@ def main():
                               for i, t in zip(burn_only.argmax(axis=1), tot)]
 
     gdf = gpd.GeoDataFrame(out, geometry=cells.geometry.values, crs=cells.crs)
-    dst = os.path.join(PRODUCT_DIR, "tva_fuel_composition.gpkg")
+    dst = os.path.join(PRODUCT_DIR, f"{REGION}_fuel_composition.gpkg")
     gdf.to_file(dst, layer="fuel_composition", driver="GPKG")
     print(f"\n  saved -> {dst}")
 

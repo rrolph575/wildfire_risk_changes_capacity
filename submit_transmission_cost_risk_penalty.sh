@@ -33,7 +33,11 @@ mkdir -p logs
 
 conda activate rev
 
-for src in historical future future_with_fuel; do
+# Sources to rebuild, space separated. Override at submit time with e.g.
+#   sbatch --export=ALL,SOURCES="future_with_fuel" submit_transmission_cost_risk_penalty.sh
+# Useful when only the fuel product changed -- the historical and future
+# products do not use fuel, so re-running them just rewrites identical output.
+for src in ${SOURCES:-historical future future_with_fuel}; do
     echo "===================== RISK_SOURCE = $src ====================="
     RISK_SOURCE=$src python transmission_cost_risk_penalty.py
     echo

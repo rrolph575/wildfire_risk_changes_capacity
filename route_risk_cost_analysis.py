@@ -70,12 +70,14 @@ from matplotlib.lines import Line2D
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from region_inputs import region_input
 
 OUT_DIR = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
-ROUTES_GPKG = ("/kfs2/projects/rev/projects/sienna_transmission/tva_lcp/"
-               "tva_lcp_route_points.gpkg")
-ORIG_TIF = ("/kfs2/projects/rev/projects/sienna_transmission/tva_lcp/"
-            "tva_lcp_default_agg_costs.tif")
+# Region to analyse. Env-driven; SoCal stops with a clear message until its
+# routing inputs are supplied -- see region_inputs.py.
+REGION = os.environ.get("REGION", "tva")
+ROUTES_GPKG = region_input(REGION, "routes_gpkg")
+ORIG_TIF = region_input(REGION, "cost_tif")
 # Which penalty raster to re-cost the existing routes against:
 #   historical | future | future_with_fuel
 # Env-overridable so one batch job can cover several without editing this file.
@@ -83,7 +85,7 @@ RISK_SOURCE = os.environ.get("RISK_SOURCE", "future_with_fuel")
 if RISK_SOURCE not in ("historical", "future", "future_with_fuel"):
     raise SystemExit(f"bad RISK_SOURCE {RISK_SOURCE!r}")
 PRODUCT_DIR = os.path.join(OUT_DIR, "outputs", f"cost_penalty_{RISK_SOURCE}")
-ADJ_TIF = os.path.join(PRODUCT_DIR, "tva_cost_risk_penalty_90m.tif")
+ADJ_TIF = os.path.join(PRODUCT_DIR, f"{REGION}_cost_risk_penalty_90m.tif")
 STATES_PATH = "/projects/rev/projects/scapes/maps/conus_state_boundaries.gpkg"
 
 STEP_M = 45.0                     # sampling interval along each route
@@ -91,7 +93,7 @@ CLASS_ORDER = ["none", "low", "medium", "high"]
 MULTIPLIERS = [1.0, 1.1, 1.3, 1.5]
 CLASS_COLORS = {"none": "#cfcfcf", "low": "#fc9272",
                 "medium": "#ef3b2c", "high": "#99000d"}
-TAG = "tva_route_risk_cost"
+TAG = f"{REGION}_route_risk_cost"
 
 
 # ----------------------------------------------------------------------------
@@ -181,7 +183,7 @@ def main():
         "added_cost": res["added_cost_pipeline_basis"],
         "pct_increase": res["pct_increase"].round(3),
     })
-    ends_csv = os.path.join(PRODUCT_DIR, "tva_route_endpoint_costs.csv")
+    ends_csv = os.path.join(PRODUCT_DIR, f"{REGION}_route_endpoint_costs.csv")
     ends.to_csv(ends_csv, index=False)
     print(f"  saved -> {ends_csv}")
     gdf = gpd.GeoDataFrame(res.copy(), geometry=routes.geometry.values,

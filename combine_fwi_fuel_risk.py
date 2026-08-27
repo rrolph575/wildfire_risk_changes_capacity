@@ -15,15 +15,31 @@ WHY A LOOKUP TABLE, NOT A FORMULA
 THE TWO AXES
     fire weather   p98 FWI vs the region's 50th/75th/90th-percentile cell
                    -> none / low / medium / high        (already computed)
-    fuel           `woody` vs the region's 33rd/67th-percentile cell
+    fuel           `fuel_index` vs the region's 33rd/67th-percentile cell
                    -> low / medium / high
 
-    woody = frac_TL + frac_TU + frac_SH + frac_GS, i.e. the fraction of the
-    cell in timber and shrub families. Grass is excluded: it burns fast but
-    carries little load, and frac_GR is flat across TVA (rank correlation with
-    longitude -0.04), so it would add noise rather than signal. Non-burnable
-    needs no special handling in this axis -- woody is a fraction of the WHOLE
-    cell, so agriculture/water/urban dilute it automatically.
+    fuel_index = frac_SH + frac_GS + frac_TU + frac_TL + 0.5 * frac_GR
+
+    A load-weighted fraction of the cell carrying fuel. Shrub, timber and the
+    grass-shrub mosaic count fully; pure grass counts HALF, because grass is
+    genuinely two-sided -- it has the fastest rate of spread of any family but
+    roughly a third of chaparral's fuel load, so weighting it 0 ignores the
+    spread and weighting it 1 ignores the load. 0.5 is a judgement between the
+    two, not a published coefficient; it is worth sensitivity-testing at 0.3
+    and 0.7. SB (slash) is excluded as immaterial -- 85 TVA cells and 2 SoCal
+    cells exceed 1%. Non-burnable needs no special handling in this axis --
+    fuel_index is a fraction of the WHOLE cell, so agriculture/water/urban
+    dilute it automatically.
+
+    GRASS IS NOT UNIFORM ACROSS REGIONS, and the region-relative terciles
+    handle that rather than the weight. TVA grass is pasture between timber
+    stands, and against TVA's 0.637 bar a pure grass cell (index 0.50) is
+    correctly LOW. SoCal grass is cured annual grassland -- frequently
+    type-converted chaparral, burned too often for shrubs to re-establish --
+    and against SoCal's 0.408 bar the same cell is MEDIUM. Same index,
+    different neighbours. Note also that grass mixed into shrub is already
+    counted at full weight through GS, which is 29.3% of SoCal's burnable
+    ground but only 1.0% of TVA's; the 0.5 applies to open grassland alone.
 
     Fuel uses TERCILES rather than mirroring the FWI 50/75/90. Fuel is a
     MODIFIER, not the primary axis: with FWI-style cutoffs it demotes 17,557
@@ -40,22 +56,27 @@ THE MATRIX -- fuel shifts the fire-weather class by one step, clipped
 
     Read the two corners that matter: severe fire weather over bare ground is
     marked DOWN; moderate weather over heavy timber is marked UP. That is the
-    whole reason for adding fuel -- the fire-weather-only map concentrates risk
-    in agricultural western TVA and understates the forested eastern plateau
-    (fuel rank-correlates +0.40 with longitude, fire weather -0.52).
+    whole reason for adding fuel -- in TVA the fire-weather-only map
+    concentrates risk in the agricultural west and understates the forested
+    eastern plateau (fuel rank-correlates +0.40 with longitude, fire weather
+    -0.52). SoCal behaves differently: fuel there points the same way as fire
+    weather and is geographically flat, so its job is demoting low-fuel desert
+    rather than redistributing.
 
 NON-BURNABLE GATE
     Applied last and overriding: frac_burnable < NONBURN_GATE forces `none`.
     Catches reservoirs and dense urban, and is what stops the cost penalty
     charging a wildfire multiplier on open water.
 
-Run in the `rev` conda env (fast, ~20 s -- no batch job needed):
+Run in the `rev` conda env (fast, ~20 s -- no batch job needed). REGION is
+env-driven so one script serves both, matching landfire_fuel_composition.py:
     conda activate rev
-    python combine_fwi_fuel_risk.py
+    REGION=tva   python combine_fwi_fuel_risk.py
+    REGION=socal python combine_fwi_fuel_risk.py
 
 Outputs (to outputs/risk_future_with_fuel/):
   * abs_risk_future_fuel_<region>_risk_classes.gpkg -- layer "risk_classes",
-        one polygon per cell with both input classes, the fuel index, and the
+        one polygon per cell with both input classes, `fuel_index`, and the
         combined class, so any cell's result can be traced back to its inputs.
   * fuel_combination_<region>.png -- three panels: fire weather only, fuel,
         and the combined result, for judging whether the combination behaves.
@@ -80,10 +101,11 @@ PROJ = "/projects/alcaps/bfuchs/wildfire_risk_changes_capacity"
 PRODUCT_DIR = os.path.join(PROJ, "outputs", "risk_future_with_fuel")
 FWI_GPKG = os.path.join(PROJ, "outputs", "risk_future",
                         "abs_risk_future_p98_risk_classes.gpkg")
-FUEL_GPKG = os.path.join(PRODUCT_DIR, "tva_fuel_composition.gpkg")
-REGION = "tva"
+REGION = os.environ.get("REGION", "tva")
+FUEL_GPKG = os.path.join(PRODUCT_DIR, f"{REGION}_fuel_composition.gpkg")
 
 FUEL_QUANTILES = (0.33, 0.67)      # terciles -> low / medium / high
+GRASS_WEIGHT = 0.5                 # GR weight in fuel_index; see docstring
 NONBURN_GATE = 0.10                # frac_burnable below this -> forced none
 FUEL_ORDER = ["low", "medium", "high"]
 FUEL_SHIFT = {"low": -1, "medium": 0, "high": +1}
@@ -106,10 +128,11 @@ def build():
     if len(d) != len(fwi):
         raise SystemExit(f"join lost cells: {len(fwi)} fwi -> {len(d)} joined")
 
-    d["woody"] = d.frac_TL + d.frac_TU + d.frac_SH + d.frac_GS
-    q1, q2 = d["woody"].quantile(list(FUEL_QUANTILES))
-    d["fuel_class"] = np.where(d.woody >= q2, "high",
-                        np.where(d.woody >= q1, "medium", "low"))
+    d["fuel_index"] = (d.frac_SH + d.frac_GS + d.frac_TU + d.frac_TL
+                       + GRASS_WEIGHT * d.frac_GR)
+    q1, q2 = d["fuel_index"].quantile(list(FUEL_QUANTILES))
+    d["fuel_class"] = np.where(d.fuel_index >= q2, "high",
+                        np.where(d.fuel_index >= q1, "medium", "low"))
     d["fuel_cut_low"], d["fuel_cut_high"] = float(q1), float(q2)
 
     d["combined_class"] = [combine(a, b)
@@ -120,7 +143,8 @@ def build():
     d["combined_level"] = [CLASS_ORDER.index(c) for c in d.combined_class]
 
     print(f"{len(d):,} {REGION} cells")
-    print(f"fuel cutoffs (woody): low <{q1:.3f} | medium {q1:.3f}-{q2:.3f} "
+    print(f"fuel cutoffs (fuel_index): low <{q1:.3f} | "
+          f"medium {q1:.3f}-{q2:.3f} "
           f"| high >={q2:.3f}")
     print(f"non-burnable gate: frac_burnable < {NONBURN_GATE} -> "
           f"{int(gated.sum()):,} cells forced to none")
@@ -152,7 +176,7 @@ def figure(d, cuts):
         ("(a) fire weather only\np98 FWI vs regional cutoffs",
          [CLASS_ORDER.index(c) for c in d.risk_class],
          [CLASS_COLORS[c] for c in CLASS_ORDER], CLASS_ORDER),
-        (f"(b) fuel\nwoody fraction, terciles {cuts[0]:.2f} / {cuts[1]:.2f}",
+        (f"(b) fuel\nfuel_index, terciles {cuts[0]:.2f} / {cuts[1]:.2f}",
          [FUEL_ORDER.index(c) for c in d.fuel_class],
          [FUEL_COLORS[c] for c in FUEL_ORDER], FUEL_ORDER),
         ("(c) combined\nfuel shifts the class by one step",
@@ -190,7 +214,7 @@ def main():
     os.makedirs(PRODUCT_DIR, exist_ok=True)
     d, cuts = build()
     keep = ["region", "lon", "lat", "future_p98_fwi", "risk_class",
-            "woody", "frac_burnable", "fuel_class", "fuel_cut_low",
+            "fuel_index", "frac_burnable", "fuel_class", "fuel_cut_low",
             "fuel_cut_high", "combined_class", "combined_level",
             "nonburnable_gated", "geometry"]
     out = os.path.join(PRODUCT_DIR,
