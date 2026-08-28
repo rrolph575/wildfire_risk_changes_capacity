@@ -91,13 +91,19 @@ def rasterize_f(lon, lat, values, grid, step):
     return np.ma.masked_invalid(img), extent
 
 
-def load():
+def load(region=None):
+    """Combined classes joined to fuel composition for one region.
+
+    `region` is an explicit argument, not just the module-level REGION, because
+    importers set REGION in their own environment AFTER this module is imported
+    -- reading the module global then silently loads the wrong region."""
+    region = region or REGION
     comb = gpd.read_file(
         os.path.join(PRODUCT_DIR,
-                     f"abs_risk_future_fuel_{REGION}_risk_classes.gpkg"),
+                     f"abs_risk_future_fuel_{region}_risk_classes.gpkg"),
         layer="risk_classes")
     fuel = gpd.read_file(
-        os.path.join(PRODUCT_DIR, f"{REGION}_fuel_composition.gpkg"),
+        os.path.join(PRODUCT_DIR, f"{region}_fuel_composition.gpkg"),
         layer="fuel_composition")
     d = comb.merge(fuel.drop(columns="geometry"), on=["region", "lon", "lat"],
                    how="inner", validate="one_to_one")

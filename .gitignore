@@ -20,3 +20,10 @@ outputs_fwi_pre20260805/
 # Binary and non-delta-compressing, so every regeneration would add a full
 # copy to git history forever. The per-cell summary .gpkg IS committed.
 outputs/**/tva_cost_risk_penalty_90m.tif
+
+# Declined prototype: a change-based (delta) fire-weather axis, built and scored
+# against MTBS on 2026-08-28 and NOT adopted -- its better lift scores could not
+# be separated from a land-cover confound. The scripts are committed
+# (delta_fwi_risk.py, score_risk_variants.py) and regenerate this in ~20 s, so
+# the 19 MB of output is not worth carrying in history.
+outputs/risk_future_delta/
